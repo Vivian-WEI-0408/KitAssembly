@@ -150,11 +150,161 @@ def _request_scar(session, url):
     return _extract_scar(json_data)
 
 
+def _webdb_timeout():
+    return getattr(settings, "API_REQUEST_TIMEOUT", 20)
+
+
+def _visitor_cookie_name():
+    return getattr(settings, "VISITOR_COOKIE_NAME", "kitapp_visitor_id")
+
+
+def _set_visitor_cookie(response, visitor_id):
+    response.set_cookie(
+        _visitor_cookie_name(),
+        str(visitor_id),
+        max_age=getattr(settings, "VISITOR_COOKIE_MAX_AGE", 60 * 60 * 24 * 365),
+        secure=getattr(settings, "VISITOR_COOKIE_SECURE", False),
+        httponly=False,
+        samesite=getattr(settings, "VISITOR_COOKIE_SAMESITE", "Lax"),
+    )
+    return response
+
+
+def _get_client_ip(request):
+    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR")
+
+
+def _parse_json_body(request):
+    try:
+        return json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return None
+
+
+def _post_webdatabase_json(session, endpoint, payload):
+    response = session.post(
+        f"{settings.WEBDATABASE_URL}{endpoint}",
+        json=payload,
+        timeout=_webdb_timeout(),
+    )
+    try:
+        data = response.json()
+    except ValueError:
+        data = {"success": False, "message": response.text}
+    return response, data
+
+
+def _resolve_visitor_id(payload, request):
+    payload_visitor_id = None
+    if isinstance(payload, dict):
+        payload_visitor_id = payload.get("visitor_id")
+    return payload_visitor_id or request.COOKIES.get(_visitor_cookie_name())
+
+
 
 
 # Create your views here.
 def index(request):
     return render(request,'index.html')
+
+
+def register_visitor(request):
+    if request.method != "POST":
+        return JsonResponse({"success": False, "message": "method not allowed"}, status=405, safe=False)
+
+    payload = _parse_json_body(request)
+    if payload is None:
+        return JsonResponse({"success": False, "message": "invalid json"}, status=400, safe=False)
+
+    institution = (payload.get("institution") or "").strip()
+    lab_name = (payload.get("lab_name") or "").strip()
+    person_name = (payload.get("person_name") or "").strip()
+    if not institution or not lab_name or not person_name:
+        return JsonResponse(
+            {"success": False, "message": "institution, lab_name and person_name are required"},
+            status=400,
+            safe=False,
+        )
+
+    session = __create_session(request)
+    if session is None:
+        return JsonResponse({"success": False, "message": "Login Error"}, status=403, safe=False)
+
+    api_payload = {
+        "institution": institution,
+        "lab_name": lab_name,
+        "person_name": person_name,
+    }
+
+    try:
+        response, data = _post_webdatabase_json(session, "createVisitorProfile", api_payload)
+    except requests.RequestException as exc:
+        return JsonResponse(
+            {"success": False, "message": f"downstream request failed: {str(exc)}"},
+            status=502,
+            safe=False,
+        )
+
+    if response.status_code != 200 or not data.get("success"):
+        return JsonResponse(data, status=response.status_code, safe=False)
+
+    visitor_data = data.get("data") or {}
+    visitor_id = visitor_data.get("id")
+    if not visitor_id:
+        return JsonResponse(
+            {"success": False, "message": "visitor id missing from WebDatabase response"},
+            status=502,
+            safe=False,
+        )
+
+    kitapp_response = JsonResponse(
+        {"success": True, "data": {"visitor_id": visitor_id, "profile": visitor_data}},
+        status=200,
+        safe=False,
+    )
+    return _set_visitor_cookie(kitapp_response, visitor_id)
+
+
+def track_visit(request):
+    if request.method != "POST":
+        return JsonResponse({"success": False, "message": "method not allowed"}, status=405, safe=False)
+
+    payload = _parse_json_body(request)
+    if payload is None:
+        return JsonResponse({"success": False, "message": "invalid json"}, status=400, safe=False)
+
+    visitor_id = _resolve_visitor_id(payload, request)
+    if not visitor_id:
+        return JsonResponse({"success": False, "message": "visitor_id not found in cookies"}, status=400, safe=False)
+
+    session = __create_session(request)
+    if session is None:
+        return JsonResponse({"success": False, "message": "Login Error"}, status=403, safe=False)
+
+    api_payload = {
+        "visitor_id": visitor_id,
+        "path": (payload.get("path") or request.path).strip(),
+        "method": payload.get("method") or request.method,
+        "ip": payload.get("ip") or _get_client_ip(request),
+        "user_agent": payload.get("user_agent") or request.headers.get("User-Agent"),
+        "referer": payload.get("referer") or request.headers.get("Referer"),
+        "cookie_snapshot": { "visitor_id": str(visitor_id) },
+    }
+
+    try:
+        response, data = _post_webdatabase_json(session, "createVisitorAccessLog", api_payload)
+    except requests.RequestException as exc:
+        return JsonResponse(
+            {"success": False, "message": f"downstream request failed: {str(exc)}"},
+            status=502,
+            safe=False,
+        )
+
+    kitapp_response = JsonResponse(data, status=response.status_code, safe=False)
+    return _set_visitor_cookie(kitapp_response, visitor_id)
 
 def InitData(request):
     

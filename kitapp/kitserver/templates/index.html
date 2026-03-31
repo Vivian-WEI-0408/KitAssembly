@@ -477,6 +477,104 @@
             min-height: 34px;
         }
 
+        .visitor-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 35, 30, 0.44);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            z-index: 50;
+        }
+
+        .visitor-modal.visible {
+            display: flex;
+        }
+
+        .visitor-panel {
+            width: min(100%, 460px);
+            background: #fcfffd;
+            border: 1px solid #cfe0d9;
+            border-radius: 18px;
+            box-shadow: 0 22px 60px rgba(15, 43, 35, 0.18);
+            padding: 22px;
+            display: grid;
+            gap: 14px;
+        }
+
+        .visitor-panel h3 {
+            font-size: 1.15rem;
+            font-weight: 700;
+        }
+
+        .visitor-panel p {
+            color: var(--ink-soft);
+            font-size: 0.9rem;
+        }
+
+        .visitor-form {
+            display: grid;
+            gap: 12px;
+        }
+
+        .visitor-field {
+            display: grid;
+            gap: 6px;
+        }
+
+        .visitor-field label {
+            font-size: 0.86rem;
+            font-weight: 600;
+            color: var(--ink-soft);
+        }
+
+        .visitor-field input {
+            width: 100%;
+            border: 1px solid #c8dcd4;
+            background: #fff;
+            border-radius: 10px;
+            padding: 11px 12px;
+            font: inherit;
+            color: var(--ink);
+        }
+
+        .visitor-field input:focus {
+            outline: none;
+            border-color: #7cb3a1;
+            box-shadow: 0 0 0 3px rgba(29, 143, 120, 0.12);
+        }
+
+        .visitor-actions {
+            display: grid;
+            gap: 10px;
+        }
+
+        .visitor-submit {
+            border: 1px solid #1f7d69;
+            background: linear-gradient(180deg, #299e85 0%, #1d8f78 100%);
+            color: #fff;
+            border-radius: 10px;
+            padding: 11px 14px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .visitor-submit:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .visitor-message {
+            min-height: 20px;
+            font-size: 0.84rem;
+            color: var(--ink-soft);
+        }
+
+        .visitor-message.error {
+            color: var(--danger);
+        }
+
         @keyframes riseIn {
             from { opacity: 0; transform: translateY(6px); }
             to { opacity: 1; transform: translateY(0); }
@@ -506,6 +604,32 @@
 </head>
 <body>
     <div class="grid-overlay"></div>
+    <div class="visitor-modal" id="visitorModal" aria-hidden="true">
+        <div class="visitor-panel">
+            <div>
+                <h3 data-i18n="visitor.title">Visitor Registration</h3>
+                <p data-i18n="visitor.subtitle">Before using KitAssembly, please register your institution, lab, and name once.</p>
+            </div>
+            <form class="visitor-form" id="visitorForm">
+                <div class="visitor-field">
+                    <label for="visitorInstitution" data-i18n="visitor.institution">Institution</label>
+                    <input id="visitorInstitution" name="institution" type="text" autocomplete="organization" required>
+                </div>
+                <div class="visitor-field">
+                    <label for="visitorLabName" data-i18n="visitor.lab">Lab / Group</label>
+                    <input id="visitorLabName" name="lab_name" type="text" autocomplete="organization-title" required>
+                </div>
+                <div class="visitor-field">
+                    <label for="visitorPersonName" data-i18n="visitor.person">Name</label>
+                    <input id="visitorPersonName" name="person_name" type="text" autocomplete="name" required>
+                </div>
+                <div class="visitor-actions">
+                    <button class="visitor-submit" id="visitorSubmitBtn" type="submit" data-i18n="visitor.submit">Save And Continue</button>
+                    <div class="visitor-message" id="visitorMessage"></div>
+                </div>
+            </form>
+        </div>
+    </div>
     <div class="app-shell">
         <header class="topbar">
             <div class="title-block">
@@ -657,6 +781,16 @@
                 "msg.assemblyCompleted": "组装完成。",
                 "msg.processFailed": "处理失败: {msg}",
                 "remove.title": "移除"
+                ,"visitor.title": "访客登记"
+                ,"visitor.subtitle": "首次使用 KitAssembly 时，请先登记机构、课题组和姓名。"
+                ,"visitor.institution": "机构"
+                ,"visitor.lab": "课题组"
+                ,"visitor.person": "姓名"
+                ,"visitor.submit": "保存并继续"
+                ,"visitor.saving": "正在保存登记信息..."
+                ,"visitor.required": "请完整填写机构、课题组和姓名。"
+                ,"visitor.trackFailed": "访问记录更新失败: {msg}"
+                ,"visitor.registerFailed": "登记失败: {msg}"
             },
             en: {
                 "title.main": "KitAssembly Bio Lab Console",
@@ -717,10 +851,21 @@
                 "msg.assemblyFailed": "assembly failed",
                 "msg.assemblyCompleted": "Assembly completed.",
                 "msg.processFailed": "process failed: {msg}",
-                "remove.title": "remove"
+                "remove.title": "remove",
+                "visitor.title": "Visitor Registration",
+                "visitor.subtitle": "Before using KitAssembly, please register your institution, lab, and name once.",
+                "visitor.institution": "Institution",
+                "visitor.lab": "Lab / Group",
+                "visitor.person": "Name",
+                "visitor.submit": "Save And Continue",
+                "visitor.saving": "Saving visitor profile...",
+                "visitor.required": "Please complete institution, lab, and name.",
+                "visitor.trackFailed": "Visit tracking failed: {msg}",
+                "visitor.registerFailed": "Registration failed: {msg}"
             }
         };
 
+        const VISITOR_COOKIE_NAME = 'kitapp_visitor_id';
         let currentCategory = 'ecoli';
         let currentType = 'part';
         let selectedComponents = [];
@@ -736,6 +881,13 @@
         const readyHint = document.getElementById('readyHint');
         const langZh = document.getElementById('langZh');
         const langEn = document.getElementById('langEn');
+        const visitorModal = document.getElementById('visitorModal');
+        const visitorForm = document.getElementById('visitorForm');
+        const visitorInstitution = document.getElementById('visitorInstitution');
+        const visitorLabName = document.getElementById('visitorLabName');
+        const visitorPersonName = document.getElementById('visitorPersonName');
+        const visitorSubmitBtn = document.getElementById('visitorSubmitBtn');
+        const visitorMessage = document.getElementById('visitorMessage');
 
         let componentEcoliPartList = [];
         let componentEcoliBackboneList = [];
@@ -818,6 +970,123 @@
             return value ?? '-';
         }
 
+        function getCookie(name) {
+            const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const match = document.cookie.match(new RegExp(`(?:^|; )${escaped}=([^;]*)`));
+            return match ? decodeURIComponent(match[1]) : '';
+        }
+
+        function getVisitorId() {
+            return getCookie(VISITOR_COOKIE_NAME);
+        }
+
+        function setVisitorMessage(message, isError = false) {
+            visitorMessage.textContent = message || '';
+            visitorMessage.classList.toggle('error', Boolean(isError));
+        }
+
+        function openVisitorModal() {
+            visitorModal.classList.add('visible');
+            visitorModal.setAttribute('aria-hidden', 'false');
+            setVisitorMessage('');
+            setTimeout(() => visitorInstitution.focus(), 30);
+        }
+
+        function closeVisitorModal() {
+            visitorModal.classList.remove('visible');
+            visitorModal.setAttribute('aria-hidden', 'true');
+            setVisitorMessage('');
+        }
+
+        async function registerVisitor(profile) {
+            const response = await fetch('/kitserver/register_visitor', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify(profile)
+            });
+            return response.json();
+        }
+
+        async function trackVisit(pathname = window.location.pathname) {
+            const visitorId = getVisitorId();
+            if (!visitorId) {
+                throw new Error('visitor_id not found');
+            }
+
+            const response = await fetch('/kitserver/track_visit', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify({
+                    visitor_id: visitorId,
+                    path: pathname,
+                    method: 'GET',
+                    referer: document.referrer || ''
+                })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'track visit failed');
+            }
+            return data;
+        }
+
+        function waitForVisitorRegistration() {
+            openVisitorModal();
+
+            return new Promise((resolve) => {
+                const handleSubmit = async (event) => {
+                    event.preventDefault();
+
+                    const institution = visitorInstitution.value.trim();
+                    const lab_name = visitorLabName.value.trim();
+                    const person_name = visitorPersonName.value.trim();
+
+                    if (!institution || !lab_name || !person_name) {
+                        setVisitorMessage(t('visitor.required'), true);
+                        return;
+                    }
+
+                    visitorSubmitBtn.disabled = true;
+                    setVisitorMessage(t('visitor.saving'));
+
+                    try {
+                        const result = await registerVisitor({ institution, lab_name, person_name });
+                        if (!result.success) {
+                            throw new Error(result.message || 'register visitor failed');
+                        }
+                        closeVisitorModal();
+                        visitorForm.removeEventListener('submit', handleSubmit);
+                        resolve(result);
+                    } catch (error) {
+                        setVisitorMessage(t('visitor.registerFailed', { msg: error.message }), true);
+                    } finally {
+                        visitorSubmitBtn.disabled = false;
+                    }
+                };
+
+                visitorForm.addEventListener('submit', handleSubmit);
+            });
+        }
+
+        async function ensureVisitorReady() {
+            const existingVisitorId = getVisitorId();
+            if (!existingVisitorId) {
+                await waitForVisitorRegistration();
+            }
+
+            try {
+                await trackVisit(window.location.pathname);
+            } catch (error) {
+                taskStatus.textContent = t('visitor.trackFailed', { msg: error.message });
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', async () => {
             langZh.addEventListener('click', () => setLanguage('zh'));
             langEn.addEventListener('click', () => setLanguage('en'));
@@ -845,6 +1114,12 @@
                 }
             });
             setLanguage(currentLang);
+            try {
+                await ensureVisitorReady();
+            } catch (error) {
+                taskStatus.textContent = t('visitor.registerFailed', { msg: error.message });
+                return;
+            }
             await fetchData();
             updateSelectedList();
         });
