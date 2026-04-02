@@ -306,6 +306,57 @@ def track_visit(request):
     kitapp_response = JsonResponse(data, status=response.status_code, safe=False)
     return _set_visitor_cookie(kitapp_response, visitor_id)
 
+
+def submit_feedback(request):
+    if request.method != "POST":
+        return JsonResponse({"success": False, "message": "method not allowed"}, status=405, safe=False)
+
+    payload = _parse_json_body(request)
+    if payload is None:
+        return JsonResponse({"success": False, "message": "invalid json"}, status=400, safe=False)
+
+    visitor_id = _resolve_visitor_id(payload, request)
+    if not visitor_id:
+        return JsonResponse({"success": False, "message": "visitor_id not found in cookies"}, status=400, safe=False)
+
+    feedback_type = (payload.get("feedback_type") or "").strip().lower()
+    title = (payload.get("title") or "").strip()
+    content = (payload.get("content") or "").strip()
+    contact_email = (payload.get("contact_email") or "").strip()
+    page_path = (payload.get("page_path") or request.path).strip()
+
+    allowed_types = {"issue", "suggestion"}
+    if feedback_type not in allowed_types:
+        return JsonResponse({"success": False, "message": "invalid feedback_type"}, status=400, safe=False)
+
+    if not title or not content:
+        return JsonResponse({"success": False, "message": "title and content are required"}, status=400, safe=False)
+
+    session = __create_session(request)
+    if session is None:
+        return JsonResponse({"success": False, "message": "Login Error"}, status=403, safe=False)
+
+    api_payload = {
+        "visitor_id": visitor_id,
+        "feedback_type": feedback_type,
+        "title": title,
+        "content": content,
+        "contact_email": contact_email,
+        "page_path": page_path,
+    }
+
+    try:
+        response, data = _post_webdatabase_json(session, "createVisitorFeedback", api_payload)
+    except requests.RequestException as exc:
+        return JsonResponse(
+            {"success": False, "message": f"downstream request failed: {str(exc)}"},
+            status=502,
+            safe=False,
+        )
+
+    kitapp_response = JsonResponse(data, status=response.status_code, safe=False)
+    return _set_visitor_cookie(kitapp_response, visitor_id)
+
 def InitData(request):
     
     session = __create_session(request)
@@ -353,7 +404,7 @@ def InitData(request):
                     #     return JsonResponse({"success":False,"next_url":f"{settings.WEBDATABASE_URL}login"})
                     if part_data_response.status_code == 200:
                         part_alias = part_data_response.json()['data']['alias']
-                        part_length = f"{part_data_response.json()['data']['lenth']}bp"
+                        part_length = f"{part_data_response.json()['data']['length']}bp"
                         part_user = part_data_response.json()['data']['user']
                         Ecoli_part_cds_info.append({"name":each,"status":True,"type":"cds","alias":part_alias,"length":part_length,"user":part_user})
                     else:
@@ -543,7 +594,7 @@ def InitData(request):
             
 def Assembly(request):
     session = __create_session(request)
-    
+    request.session["info"] = {"uid":20,"uname":"webtest"}
     if session == None:
         return JsonResponse(data={"success":False,"message":"Login Error"},status=403, safe=False)
     
@@ -551,11 +602,21 @@ def Assembly(request):
     if(request.method == "POST"):
         try:
             data = json.loads(request.body)
+            
+            
             part_list = data['part']
             backbone_list = data['backbone']
-            plasmid_list = data['plasmid']
-            
-            request_body={"uuid":plan_name,"part":part_list,"backbone":backbone_list,"plasmid":plasmid_list}
+            plasmid_list = data["plasmid"]
+            part_id_list = []
+            #处理Level1
+            if(len(part_list) == 1):
+                plasmid_id = (session.get(f"{settings.WEBDATABASE_URL}PlasmidID?name={part_list[0]}",cookies=request.COOKIES)).json()["PlasmidID"]
+                plasmid_part_id_response = (session.get(f"{settings.WEBDATABASE_URL}GetPartParent?plasmidid={plasmid_id}",cookies=request.COOKIES))
+                if plasmid_part_id_response.status_code == 200:
+                    part_id_list.append(plasmid_part_id_response.json()["data"][0]["partid"])
+                    request_body = {"uuid":plan_name,"part":part_id_list,"backbone":backbone_list,"plasmid":[]}
+            else:
+                request_body={"uuid":plan_name,"part":[],"backbone":backbone_list,"plasmid":part_list+plasmid_list}
             response = session.post(f"{settings.LABDATABASE_URL}AssemblyWithoutRepo",json=request_body,cookies=request.COOKIES)
             if(response.status_code == 200):
                 result = response.json()

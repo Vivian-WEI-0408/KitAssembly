@@ -1,3 +1,4 @@
 from django.contrib import admin
 
-# Register your models here.
+# This app currently proxies data operations to WebDatabase APIs,
+# so there are no local Django admin models to register here.
